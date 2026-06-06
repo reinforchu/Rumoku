@@ -2,6 +2,7 @@
 // =============================
 // Basic auth
 // =============================
+if (!isset($_GET['share']))
 if (
     !isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] !== "admin" || $_SERVER['PHP_AUTH_PW'] !== "admin"
 ) {
@@ -45,15 +46,26 @@ $db->exec("PRAGMA synchronous=NORMAL;");
 $db->exec("CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL DEFAULT '新しい会話',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    hide_user_messages INTEGER DEFAULT 0
 )");
+$db->exec("ALTER TABLE shared_conversations ADD COLUMN hide_user_messages INTEGER DEFAULT 0");
+$db->exec("CREATE TABLE IF NOT EXISTS shared_conversations (
+    share_id TEXT PRIMARY KEY,
+    conversation_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    hide_user_messages INTEGER DEFAULT 0
+)");
+$db->exec("ALTER TABLE shared_conversations ADD COLUMN hide_user_messages INTEGER DEFAULT 0");
 $db->exec("CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER,
     role TEXT,
     content TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    hide_user_messages INTEGER DEFAULT 0
 )");
+$db->exec("ALTER TABLE shared_conversations ADD COLUMN hide_user_messages INTEGER DEFAULT 0");
 
 // =============================
 // アクション処理
@@ -85,6 +97,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $conversation_id = intval($_POST['conversation_id']);
         $title = $db->querySingle("SELECT title FROM conversations WHERE id=$conversation_id");
         echo $title;
+        exit;
+    }
+
+
+    elseif ($action === 'share_conversation') {
+
+        $conversation_id = intval($_POST['conversation_id']);
+
+        $existing = $db->querySingle(
+            "SELECT share_id FROM shared_conversations WHERE conversation_id=$conversation_id"
+        );
+
+        $hide_questions = isset($_POST['hide_questions']) ? intval($_POST['hide_questions']) : 0;
+
+        if (!$existing) {
+            $existing = bin2hex(random_bytes(8));
+            $shareEscaped = $db->escapeString($existing);
+            $db->exec("INSERT INTO shared_conversations (share_id, conversation_id, hide_user_messages) VALUES ('$shareEscaped',$conversation_id,$hide_questions)");
+        } else {
+            $db->exec("UPDATE shared_conversations SET hide_user_messages=$hide_questions WHERE conversation_id=$conversation_id");
+        }
+
+        header('Content-Type: application/json');
+
+        echo json_encode([
+            "url" => ((isset($_SERVER['HTTPS']) ? "https" : "http")
+            . "://"
+            . $_SERVER['HTTP_HOST']
+            . strtok($_SERVER['REQUEST_URI'], '?')
+            . "?share="
+            . $existing)
+        ]);
         exit;
     }
 
@@ -226,7 +270,15 @@ function callOpenAI($apiKey, $model, $messages) {
 // データ取得
 // =============================
 $conversations = $db->query("SELECT * FROM conversations ORDER BY created_at DESC");
-$current_conversation_id = $_GET['cid'] ?? null;
+if(isset($_GET['share'])){
+    $share_id = $db->escapeString($_GET['share']);
+    $current_conversation_id = $db->querySingle("SELECT conversation_id FROM shared_conversations WHERE share_id='$share_id'");
+    $hideUserMessages = intval($db->querySingle("SELECT hide_user_messages FROM shared_conversations WHERE share_id='$share_id'"));
+    $shareMode = true;
+} else {
+    $shareMode = false;
+    $current_conversation_id = $_GET['cid'] ?? null;
+}
 $messages = [];
 if ($current_conversation_id) {
     $res = $db->query("SELECT * FROM messages WHERE conversation_id=$current_conversation_id ORDER BY created_at ASC");
@@ -235,6 +287,63 @@ if ($current_conversation_id) {
     }
 }
 ?>
+
+<?php if(isset($shareMode) && $shareMode): ?>
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>共有された会話</title>
+<style>
+body{margin:0;background:#f7f7f8;font-family:sans-serif;}
+.share-container{max-width:900px;margin:0 auto;padding:24px;}
+.share-title{font-size:32px;margin-bottom:24px;}
+.msg{margin:10px 0;padding:10px;border-radius:8px;max-width:85%;word-break:break-word;}
+.msg.user{background:#3498db;color:white;margin-left:auto;}
+.msg.assistant{background:white;border:1px solid #ccc;}
+</style>
+</head>
+<body>
+<div class="share-container">
+<h1 class="share-title">
+<?= htmlspecialchars($db->querySingle("SELECT title FROM conversations WHERE id=$current_conversation_id")) ?>
+</h1>
+
+<?php foreach ($messages as $msg): ?>
+<?php if (!isset($hideUserMessages) || !$hideUserMessages || $msg['role'] !== 'user'): ?>
+<div class="msg <?= $msg['role'] ?>">
+<?= nl2br(htmlspecialchars($msg['content'])) ?>
+</div>
+<?php endif; ?>
+<?php endforeach; ?>
+
+</div>
+
+<script>
+async function shareConversation(conversationId){
+ const fd = new FormData();
+ fd.append("action","share_conversation");
+ fd.append("conversation_id",conversationId);
+
+ const r = await fetch(window.location.href,{
+   method:"POST",
+   body:fd
+ });
+
+ const j = await r.json();
+
+ await navigator.clipboard.writeText(j.url);
+
+ alert("共有URLをコピーしました\n\n" + j.url);
+}
+</script>
+
+</body>
+</html>
+<?php exit; endif; ?>
+
 <!DOCTYPE html>
 <html lang="ja-JP">
     <head>
@@ -507,21 +616,24 @@ body{
   </form>
   <hr>
   <h2>実行環境</h2>
-  <small>ホスト名：<?php echo "{$_SERVER['SERVER_NAME']}"; ?><br>認証：<?php echo "{$API_CHK}"; ?><br>使用モデル：<?php echo "{$MODEL}"; ?><br>Version 1.0.0 / @reinforchu</small>
+  <small>ホスト名：<?php echo "{$_SERVER['SERVER_NAME']}"; ?><br>認証：<?php echo "{$API_CHK}"; ?><br>使用モデル：<?php echo "{$MODEL}"; ?><br>Version 1.1.0 / @reinforchu</small>
   <hr>
   <h2>チャット履歴</h2>
 <?php while($row = $conversations->fetchArray(SQLITE3_ASSOC)): ?>
-  <div class="conv <?= ($row['id']==$current_conversation_id)?'active':'' ?>">
+  <div class="conv <?= ($row['id']==$current_conversation_id)?'active':'' ?>" onclick="event.stopPropagation();window.location.href='?cid=<?= $row['id'] ?>'">
     <a href="?cid=<?= $row['id'] ?>" style="color:white; text-decoration:none;"><small class="sidebar-title-<?= $row['id'] ?>"><?= htmlspecialchars($row['title']) ?></small></a>
 <hr>
+    <button onclick="event.stopPropagation();window.location.href='?cid=<?= $row['id'] ?>'" style="background:#FF8C00; color:white; border:none; border-radius:4px; cursor:pointer;">再開する</button>
 
-    <button onclick="window.location.href='?cid=<?= $row['id'] ?>'" style="background:#FF8C00; color:white; border:none; border-radius:4px; cursor:pointer;">チャットを再開</button>
+    <button id="editBtn-<?= $row['id'] ?>" style="background:#2E8B57; color:white; border:none; border-radius:4px; cursor:pointer;" data-title="<?= htmlspecialchars($row['title'], ENT_QUOTES) ?>" onclick="event.stopPropagation();openEditModal(<?= $row['id'] ?>, this.getAttribute('data-title'))">名前変更</button>
 
-    <button id="editBtn-<?= $row['id'] ?>" style="background:#2E8B57; color:white; border:none; border-radius:4px; cursor:pointer;" data-title="<?= htmlspecialchars($row['title'], ENT_QUOTES) ?>" onclick="openEditModal(<?= $row['id'] ?>, this.getAttribute('data-title'))">名前変更</button>
-
-    <form method="post" style="display:inline;">
+<form method="post" style="display:inline;">
   <input type="hidden" name="action" value="delete_conversation">
   <input type="hidden" name="id" value="<?= $row['id'] ?>">
+  <button type="button"
+        class="share-btn"
+        data-cid="<?= $row['id'] ?>"
+        style="background:#4169E1; color:white; border:none; border-radius:4px; cursor:pointer;">共有</button>
   <button style="background:#DC143C; color:white; border:none; border-radius:4px; cursor:pointer;">削除</button>
 </form>
 <br>
@@ -541,6 +653,9 @@ body{
         echo '<h2 style="margin:0; font-size:20px;">💬  チャットを選択してください</h2>';
     }
     ?>
+<?php if(!$shareMode): ?>
+<button id="shareBtn" style="background:#4169E1;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📎 共有</button>
+<?php endif; ?>
 </div>
   <div class="chat-messages">
     <?php foreach ($messages as $msg): ?>
@@ -809,6 +924,56 @@ document.addEventListener("DOMContentLoaded", function () {
       });
   }
 });
+</script>
+
+
+
+<script>
+document.querySelectorAll('.share-btn').forEach(btn => {
+    btn.addEventListener('click', async function(e){
+        e.preventDefault();
+        e.stopPropagation();
+
+        try{
+            const fd = new FormData();
+            fd.append('action','share_conversation');
+            fd.append('conversation_id', this.dataset.cid);
+            const hideQuestions = confirm('共有時に質問内容を非表示にしますか？\nOK=非表示 / キャンセル=表示');
+            fd.append('hide_questions', hideQuestions ? '1' : '0');
+
+            const response = await fetch(window.location.pathname, {
+                method: 'POST',
+                body: fd
+            });
+
+            const json = await response.json();
+
+            await navigator.clipboard.writeText(json.url);
+
+            alert('共有URLをコピーしました\n\n' + json.url);
+        }catch(err){
+            console.error(err);
+            alert('共有URLの生成に失敗しました');
+        }
+    });
+});
+</script>
+
+<script>
+const shareBtn=document.getElementById("shareBtn");
+if(shareBtn){
+shareBtn.addEventListener("click",async()=>{
+ const fd=new FormData();
+ fd.append("action","share_conversation");
+ fd.append("conversation_id","<?= $current_conversation_id ?>");
+ const hideQuestions=confirm("共有時に質問内容を非表示にしますか？\nOK=非表示 / キャンセル=表示");
+ fd.append("hide_questions",hideQuestions?"1":"0");
+ const r=await fetch(window.location.href,{method:"POST",body:fd});
+ const j=await r.json();
+ await navigator.clipboard.writeText(j.url);
+ alert("共有URLをクリップボードにコピーしました\n\n"+j.url);
+});
+}
 </script>
 
 </body>
