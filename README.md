@@ -1,7 +1,7 @@
 # Rumoku
-Lightweight and simple AI chat web UI
+Lightweight AI chat web UI
 
-![Top page](image.png)
+![Screenshot](image.png)
 
 # 注意事項
 * セキュアコーディングは期待しないでください。原則ローカルでホストして利用してください。
