@@ -1,6 +1,8 @@
 # Rumoku
 Lightweight and simple AI chat web UI
 
+![Top page](image.png)
+
 # 注意事項
 * セキュアコーディングは期待しないでください。原則ローカルでホストして利用してください。
 * セキュリティ上、拡張子「.db」ファイルをダウンロードできないようにWebサーバーの設定が必要です。
