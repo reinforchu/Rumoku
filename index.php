@@ -2,9 +2,19 @@
 // =============================
 // Basic auth
 // =============================
+$dbAuth = new SQLite3('chat.db');
+$dbAuth->exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
+$storedHash = $dbAuth->querySingle("SELECT value FROM settings WHERE key='basic_auth_password'");
+if (!$storedHash) {
+    $storedHash = password_hash('admin', PASSWORD_DEFAULT);
+    $dbAuth->exec("INSERT OR REPLACE INTO settings(key,value) VALUES('basic_auth_password','".$dbAuth->escapeString($storedHash)."')");
+}
+
 if (!isset($_GET['share']))
 if (
-    !isset($_SERVER['PHP_AUTH_USER']) || $_SERVER['PHP_AUTH_USER'] !== "admin" || $_SERVER['PHP_AUTH_PW'] !== "admin"
+    !isset($_SERVER['PHP_AUTH_USER']) ||
+    $_SERVER['PHP_AUTH_USER'] !== basename(getcwd()) ||
+    !password_verify($_SERVER['PHP_AUTH_PW'] ?? '', $storedHash)
 ) {
     header('WWW-Authenticate: Basic realm="Restricted Page"');
     header('HTTP/1.0 401 Unauthorized');
@@ -14,7 +24,7 @@ if (
 // =============================
 // 設定
 // =============================
-$API_KEY = "sk-proj-----"; // ←自分のキーに置き換えてください
+$API_KEY = "sk------"; // ←自分のキーに置き換えてください
 $MODEL   = "gpt-5-nano";       // モデルは適宜変更可
 
 // =============================
@@ -72,6 +82,17 @@ $db->exec("ALTER TABLE shared_conversations ADD COLUMN hide_user_messages INTEGE
 // =============================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+
+    if ($action === 'change_password') {
+        $newPassword = trim($_POST['new_password'] ?? '');
+        if ($newPassword !== '') {
+            $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+            $db->exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
+            $db->exec("INSERT OR REPLACE INTO settings(key,value) VALUES('basic_auth_password','".$db->escapeString($hash)."')");
+        }
+        header("Location: ".$_SERVER['PHP_SELF']);
+        exit;
+    }
 
     if ($action === 'new_conversation') {
         $db->exec("INSERT INTO conversations (title) VALUES ('新しい会話')");
@@ -340,8 +361,7 @@ async function shareConversation(conversationId){
 }
 </script>
 
-</body>
-</html>
+
 <?php exit; endif; ?>
 
 <!DOCTYPE html>
@@ -614,9 +634,15 @@ body{
     <input type="hidden" name="action" value="new_conversation">
     <button style="width:100%; padding:8px; background:#1abc9c; border:none; color:white; border-radius:6px; cursor:pointer;">💬  新しいチャットの開始</button>
   </form>
+
+  <button id="changePasswordBtn" type="button"
+    style="width:100%;margin-top:8px;padding:8px;background:#6a5acd;border:none;color:white;border-radius:6px;cursor:pointer;">
+    🔑  パスワード変更
+  </button>
+
   <hr>
-  <h2>実行環境</h2>
-  <small>ホスト名：<?php echo "{$_SERVER['SERVER_NAME']}"; ?><br>認証：<?php echo "{$API_CHK}"; ?><br>使用モデル：<?php echo "{$MODEL}"; ?><br>Version 1.1.0 / @reinforchu</small>
+  <h2>ステータス</h2>
+  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.1.1 / @reinforchu</small>
   <hr>
   <h2>チャット履歴</h2>
 <?php while($row = $conversations->fetchArray(SQLITE3_ASSOC)): ?>
@@ -976,5 +1002,47 @@ shareBtn.addEventListener("click",async()=>{
 }
 </script>
 
+
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+    const btn = document.getElementById('changePasswordBtn');
+    const modal = document.getElementById('passwordModal');
+
+    if(btn && modal){
+        btn.addEventListener('click', function(e){
+            e.preventDefault();
+            modal.style.display = 'flex';
+        });
+
+        modal.addEventListener('click', function(e){
+            if(e.target === modal){
+                modal.style.display = 'none';
+            }
+        });
+    }
+});
+</script>
+
+
+<div id="passwordModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);align-items:center;justify-content:center;z-index:9999;">
+  <form method="post" style="background:white;padding:20px;border-radius:8px;min-width:300px;">
+    <input type="hidden" name="action" value="change_password">
+    <h3>パスワード変更</h3>
+    <input type="password" name="new_password" placeholder="新しいパスワード" required style="width:100%;padding:8px;">
+    <br><br>
+    <button type="submit">保存</button>
+    <button type="button" onclick="document.getElementById('passwordModal').style.display='none';">キャンセル</button>
+  </form>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+ const btn=document.getElementById('changePasswordBtn');
+ const modal=document.getElementById('passwordModal');
+ if(btn&&modal){
+   btn.onclick=function(e){e.preventDefault();modal.style.display='flex';};
+   modal.onclick=function(e){if(e.target===modal) modal.style.display='none';};
+ }
+});
+</script>
 </body>
 </html>
