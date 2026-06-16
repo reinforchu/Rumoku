@@ -318,12 +318,24 @@ if ($current_conversation_id) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>共有された会話</title>
 <style>
+<style>
 body{margin:0;background:#f7f7f8;font-family:sans-serif;}
 .share-container{max-width:900px;margin:0 auto;padding:24px;}
 .share-title{font-size:32px;margin-bottom:24px;}
 .msg{margin:10px 0;padding:10px;border-radius:8px;max-width:85%;word-break:break-word;}
 .msg.user{background:#3498db;color:white;margin-left:auto;}
 .msg.assistant{background:white;border:1px solid #ccc;}
+
+/* ▼ 共有ページ用のMarkdownスタイル ▼ */
+.msg p { margin: 0 0 10px 0; }
+.msg p:last-child { margin: 0; }
+.msg pre { background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 10px 0; font-family: Consolas, Monaco, monospace; }
+.msg code { background: rgba(0,0,0,0.1); padding: 2px 4px; border-radius: 4px; font-family: Consolas, Monaco, monospace; font-size: 0.9em; }
+.msg pre code { background: transparent; padding: 0; color: inherit; }
+.msg table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.msg th, .msg td { border: 1px solid #bdc3c7; padding: 8px; }
+.msg th { background: rgba(0,0,0,0.05); }
+.msg ul, .msg ol { margin: 0 0 10px 0; padding-left: 20px; }
 </style>
 </head>
 <body>
@@ -334,8 +346,8 @@ body{margin:0;background:#f7f7f8;font-family:sans-serif;}
 
 <?php foreach ($messages as $msg): ?>
 <?php if (!isset($hideUserMessages) || !$hideUserMessages || $msg['role'] !== 'user'): ?>
-<div class="msg <?= $msg['role'] ?>">
-<?= nl2br(htmlspecialchars($msg['content'])) ?>
+<div class="msg <?= $msg['role'] ?> markdown-text" style="display:none;">
+<?= htmlspecialchars($msg['content'], ENT_QUOTES, 'UTF-8') ?>
 </div>
 <?php endif; ?>
 <?php endforeach; ?>
@@ -361,7 +373,35 @@ async function shareConversation(conversationId){
 }
 </script>
 
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9.1.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
 
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            breaks: true,
+            highlight: function(code, lang) {
+                if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return code;
+            }
+        });
+
+        // 共有ページ内の隠れているメッセージをMarkdown化して表示
+        const markdownElements = document.querySelectorAll('.markdown-text');
+        markdownElements.forEach(el => {
+            const rawText = el.textContent || el.innerText;
+            el.innerHTML = DOMPurify.sanitize(marked.parse(rawText));
+            el.style.display = 'block'; // 変換が終わったら表示
+            el.classList.remove('markdown-text');
+        });
+    }
+});
+</script>
 <?php exit; endif; ?>
 
 <!DOCTYPE html>
@@ -625,6 +665,45 @@ body{
     padding:10px;
   }
 }
+
+/* ==========================
+   Markdown Styles
+========================== */
+.msg p { margin: 0 0 10px 0; }
+.msg p:last-child { margin: 0; }
+.msg pre { 
+  background: #282c34; 
+  color: #abb2bf; 
+  padding: 12px; 
+  border-radius: 6px; 
+  overflow-x: auto; 
+  margin: 10px 0;
+  font-family: Consolas, Monaco, monospace;
+}
+.msg code { 
+  background: rgba(0,0,0,0.1); 
+  padding: 2px 4px; 
+  border-radius: 4px; 
+  font-family: Consolas, Monaco, monospace; 
+  font-size: 0.9em;
+}
+.msg pre code { 
+  background: transparent; 
+  padding: 0; 
+  color: inherit;
+}
+.msg table { 
+  border-collapse: collapse; 
+  width: 100%; 
+  margin: 10px 0; 
+}
+.msg th, .msg td { 
+  border: 1px solid #bdc3c7; 
+  padding: 8px; 
+}
+.msg th { background: rgba(0,0,0,0.05); }
+.msg ul, .msg ol { margin: 0 0 10px 0; padding-left: 20px; }
+
 </style>
 </head>
 <body>
@@ -642,7 +721,7 @@ body{
 
   <hr>
   <h2>ステータス</h2>
-  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.1.1 / @reinforchu</small>
+  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.2.1 / @reinforchu</small>
   <hr>
   <h2>チャット履歴</h2>
 <?php while($row = $conversations->fetchArray(SQLITE3_ASSOC)): ?>
@@ -680,12 +759,15 @@ body{
     }
     ?>
 <?php if(!$shareMode): ?>
-<button id="shareBtn" style="background:#4169E1;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📎 共有</button>
+<div style="display:flex; gap:8px;">
+  <button id="downloadImgBtn" type="button" style="background:#8e44ad;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📷 画像保存</button>
+  <button id="shareBtn" type="button" style="background:#4169E1;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📎 共有</button>
+</div>
 <?php endif; ?>
 </div>
   <div class="chat-messages">
     <?php foreach ($messages as $msg): ?>
-      <div class="msg <?= $msg['role'] ?>"><?= nl2br(htmlspecialchars($msg['content'])) ?></div>
+      <div class="msg <?= $msg['role'] ?> markdown-text" style="display:none;"><?= htmlspecialchars($msg['content'], ENT_QUOTES, 'UTF-8') ?></div>
     <?php endforeach; ?>
   </div>
 <div class="chat-input">
@@ -863,7 +945,7 @@ document.addEventListener("DOMContentLoaded", function () {
           const chatMessages = document.querySelector(".chat-messages");
           const userMsgDiv = document.createElement("div");
           userMsgDiv.className = "msg user";
-          userMsgDiv.innerHTML = escapeHTML(messageText);
+          userMsgDiv.innerHTML = DOMPurify.sanitize(marked.parse(messageText));
           chatMessages.appendChild(userMsgDiv);
           chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -902,7 +984,7 @@ document.addEventListener("DOMContentLoaded", function () {
                           isFirstChunk = false;
                       }
                       
-                      assistantMsgDiv.innerHTML = escapeHTML(fullText);
+                      assistantMsgDiv.innerHTML = DOMPurify.sanitize(marked.parse(fullText));
                       chatMessages.scrollTop = chatMessages.scrollHeight;
                   }
               }
@@ -1042,6 +1124,111 @@ document.addEventListener('DOMContentLoaded', function(){
    btn.onclick=function(e){e.preventDefault();modal.style.display='flex';};
    modal.onclick=function(e){if(e.target===modal) modal.style.display='none';};
  }
+});
+</script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const downloadImgBtn = document.getElementById('downloadImgBtn');
+    if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', async function (e) {
+            e.preventDefault();
+            const chatMessages = document.querySelector('.chat-messages');
+            if (!chatMessages) return;
+
+            // html2canvas が読み込まれているかチェック
+            if (typeof html2canvas === 'undefined') {
+                alert('画像生成ライブラリの読み込みに失敗しました。\n広告ブロック機能などがオンになっている場合は一時的にオフにしてみてください。');
+                return;
+            }
+
+            const overlay = document.getElementById('overlay');
+            if (overlay) overlay.style.display = 'flex';
+
+            // フリーズ対策：描画の前に一呼吸おく
+            await new Promise(resolve => setTimeout(resolve, 150));
+
+            const originalOverflow = chatMessages.style.overflowY;
+            const originalHeight = chatMessages.style.height;
+            const originalScrollTop = chatMessages.scrollTop;
+
+            try {
+                // スクロール領域を展開
+                chatMessages.style.overflowY = 'visible';
+                chatMessages.style.height = chatMessages.scrollHeight + 'px';
+
+                // html2canvas で画像化
+                const canvas = await html2canvas(chatMessages, {
+                    backgroundColor: '#ecf0f1',
+                    scale: window.devicePixelRatio || 2,
+                    useCORS: true,
+                    logging: false
+                });
+
+                // スタイルを元に戻す
+                chatMessages.style.overflowY = originalOverflow;
+                chatMessages.style.height = originalHeight;
+                chatMessages.scrollTop = originalScrollTop;
+
+                // 処理中画面を非表示
+                if (overlay) overlay.style.display = 'none';
+                
+                // ダウンロード実行
+                const link = document.createElement('a');
+                const date = new Date();
+                const filename = 'chat_' + date.getFullYear() + 
+                                 (date.getMonth() + 1).toString().padStart(2, '0') + 
+                                 date.getDate().toString().padStart(2, '0') + '_' + 
+                                 date.getHours().toString().padStart(2, '0') + 
+                                 date.getMinutes().toString().padStart(2, '0') + '.png';
+                link.download = filename;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+
+            } catch (error) {
+                // エラー時も確実に元に戻す
+                chatMessages.style.overflowY = originalOverflow;
+                chatMessages.style.height = originalHeight;
+                chatMessages.scrollTop = originalScrollTop;
+                if (overlay) overlay.style.display = 'none';
+                
+                console.error("画像保存エラー:", error);
+                alert("画像の保存に失敗しました。");
+            }
+        });
+    }
+});
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/styles/atom-one-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.8.0/lib/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@9.1.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    // marked.js の設定（改行の許可とシンタックスハイライトの有効化）
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            breaks: true,
+            highlight: function(code, lang) {
+                if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language }).value;
+                }
+                return code; // 言語指定がない場合はそのまま
+            }
+        });
+
+        // ページ読み込み時に過去のメッセージをMarkdown化して表示
+        const markdownElements = document.querySelectorAll('.markdown-text');
+        markdownElements.forEach(el => {
+            const rawText = el.textContent || el.innerText;
+            // XSS対策としてDOMPurifyを通してから挿入
+            el.innerHTML = DOMPurify.sanitize(marked.parse(rawText));
+            el.style.display = 'block'; // 隠していたものを表示
+            el.classList.remove('markdown-text');
+        });
+    }
 });
 </script>
 </body>
