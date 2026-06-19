@@ -721,7 +721,7 @@ body{
 
   <hr>
   <h2>ステータス</h2>
-  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.2.1 / @reinforchu</small>
+  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.2.2 / @reinforchu</small>
   <hr>
   <h2>チャット履歴</h2>
 <?php while($row = $conversations->fetchArray(SQLITE3_ASSOC)): ?>
@@ -760,7 +760,7 @@ body{
     ?>
 <?php if(!$shareMode): ?>
 <div style="display:flex; gap:8px;">
-  <button id="downloadImgBtn" type="button" style="background:#8e44ad;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📷 画像保存</button>
+  <button id="downloadImgBtn" type="button" style="background:#8e44ad;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">⇪ 画像で共有</button>
   <button id="shareBtn" type="button" style="background:#4169E1;color:white;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;">📎 共有</button>
 </div>
 <?php endif; ?>
@@ -1154,11 +1154,25 @@ document.addEventListener("DOMContentLoaded", function () {
             const originalScrollTop = chatMessages.scrollTop;
 
             try {
-                // スクロール領域を展開
+                // 1. タイトル要素を取得（通常チャット画面、または共有画面のタイトル）
+                const headerTitle = document.getElementById("currentChatTitle") || document.querySelector(".share-title");
+                let titleClone = null;
+                
+                if (headerTitle) {
+                    titleClone = headerTitle.cloneNode(true);
+                    titleClone.style.padding = "5px 5px 15px 5px";
+                    titleClone.style.margin = "0 0 20px 0";
+                    titleClone.style.borderBottom = "2px solid #bdc3c7";
+                    titleClone.style.width = "100%";
+                    titleClone.style.display = "block";
+                    chatMessages.insertBefore(titleClone, chatMessages.firstChild);
+                }
+
+                // 2. スクロール領域を展開
                 chatMessages.style.overflowY = 'visible';
                 chatMessages.style.height = chatMessages.scrollHeight + 'px';
 
-                // html2canvas で画像化
+                // 3. html2canvas で画像化
                 const canvas = await html2canvas(chatMessages, {
                     backgroundColor: '#ecf0f1',
                     scale: window.devicePixelRatio || 2,
@@ -1166,7 +1180,12 @@ document.addEventListener("DOMContentLoaded", function () {
                     logging: false
                 });
 
-                // スタイルを元に戻す
+                // 4. キャプチャが完了したら即座にタイトルを削除
+                if (titleClone) {
+                    chatMessages.removeChild(titleClone);
+                }
+
+                // 5. スタイルとスクロール位置を元に戻す
                 chatMessages.style.overflowY = originalOverflow;
                 chatMessages.style.height = originalHeight;
                 chatMessages.scrollTop = originalScrollTop;
@@ -1174,27 +1193,63 @@ document.addEventListener("DOMContentLoaded", function () {
                 // 処理中画面を非表示
                 if (overlay) overlay.style.display = 'none';
                 
-                // ダウンロード実行
-                const link = document.createElement('a');
+                // ▼ ここから Web Share API の処理に変更 ▼
+
+                // 生成されたCanvasデータを、共有可能な「ファイル（Blob）」形式に変換する
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                if (!blob) throw new Error("画像データの生成に失敗しました");
+
                 const date = new Date();
                 const filename = 'chat_' + date.getFullYear() + 
                                  (date.getMonth() + 1).toString().padStart(2, '0') + 
                                  date.getDate().toString().padStart(2, '0') + '_' + 
                                  date.getHours().toString().padStart(2, '0') + 
                                  date.getMinutes().toString().padStart(2, '0') + '.png';
-                link.download = filename;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
+
+                // BlobからFileオブジェクトを作成
+                const file = new File([blob], filename, { type: 'image/png' });
+
+                // ダウンロードへのフォールバック関数
+                const fallbackDownload = () => {
+                    const link = document.createElement('a');
+                    link.download = filename;
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                };
+
+                // Web Share API が「ファイルの共有」をサポートしているかチェック
+                if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                    try {
+                        // シェア画面（ネイティブUI）を呼び出し
+                        await navigator.share({
+                            files: [file],
+                            title: 'チャット履歴'
+                        });
+                    } catch (error) {
+                        // ユーザーがシェア画面を自ら閉じた場合 (AbortError) は何もしない
+                        if (error.name !== 'AbortError') {
+                            console.error("共有処理でエラーが発生しました:", error);
+                            // システムエラーなどで失敗した場合はダウンロードさせる
+                            fallbackDownload();
+                        }
+                    }
+                } else {
+                    // Web Share API (ファイル共有) に非対応のブラウザの場合は直接ダウンロードさせる
+                    fallbackDownload();
+                }
 
             } catch (error) {
-                // エラー時も確実に元に戻す
+                // エラー時も確実にタイトルを削除して元に戻す（安全策）
+                if (typeof titleClone !== 'undefined' && titleClone && chatMessages.contains(titleClone)) {
+                    chatMessages.removeChild(titleClone);
+                }
                 chatMessages.style.overflowY = originalOverflow;
                 chatMessages.style.height = originalHeight;
                 chatMessages.scrollTop = originalScrollTop;
                 if (overlay) overlay.style.display = 'none';
                 
-                console.error("画像保存エラー:", error);
-                alert("画像の保存に失敗しました。");
+                console.error("画像処理エラー:", error);
+                alert("画像の生成または共有に失敗しました。");
             }
         });
     }
