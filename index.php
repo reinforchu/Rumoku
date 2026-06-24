@@ -704,6 +704,31 @@ body{
 .msg th { background: rgba(0,0,0,0.05); }
 .msg ul, .msg ol { margin: 0 0 10px 0; padding-left: 20px; }
 
+/* ==========================
+   Loading Animation
+========================== */
+.mini-spinner {
+  width: 16px;
+  height: 16px;
+  border: 3px solid rgba(0,0,0,0.1);
+  border-top-color: #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+.dots-loader::after {
+  content: '';
+  display: inline-block;
+  width: 1.5em; /* ドット3つ分の幅を確保してガタつきを防止 */
+  text-align: left;
+  animation: dots 1.5s steps(4, end) infinite;
+}
+@keyframes dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
 </style>
 </head>
 <body>
@@ -721,7 +746,7 @@ body{
 
   <hr>
   <h2>ステータス</h2>
-  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.2.2 / @reinforchu</small>
+  <small>認証：<?php echo "{$API_CHK}"; ?><br>モデル：<?php echo "{$MODEL}"; ?><br>Version 1.2.3 / @reinforchu</small>
   <hr>
   <h2>チャット履歴</h2>
 <?php while($row = $conversations->fetchArray(SQLITE3_ASSOC)): ?>
@@ -951,9 +976,27 @@ document.addEventListener("DOMContentLoaded", function () {
 
           const assistantMsgDiv = document.createElement("div");
           assistantMsgDiv.className = "msg assistant";
-          assistantMsgDiv.innerHTML = "…";
+          
+          // ▼ 1. 待機中のアニメーションとテキストをセット ▼
+          assistantMsgDiv.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px; color: #555; font-weight: bold; font-size: 0.95em; padding: 4px 0;">
+                <div class="mini-spinner"></div>
+                <div><span class="waiting-text">リクエストを送信中</span><span class="dots-loader"></span></div>
+            </div>
+          `;
           chatMessages.appendChild(assistantMsgDiv);
           chatMessages.scrollTop = chatMessages.scrollHeight;
+
+          // ▼ 2. 待機中のテキストを数秒ごとに切り替えるタイマー処理 ▼
+          const waitingTextEl = assistantMsgDiv.querySelector('.waiting-text');
+          const waitingStatuses = ["モデルが思考中", "コンテキストを解析中", "最終回答を準備中", "もうしばらくお待ちください"];
+          let statusIndex = 0;
+          const statusTimer = setInterval(() => {
+              if (statusIndex < waitingStatuses.length && waitingTextEl) {
+                  waitingTextEl.textContent = waitingStatuses[statusIndex];
+                  statusIndex++;
+              }
+          }, 2000); // 2秒ごとにテキストを更新
 
           const formData = new FormData(form);
           formData.set("message", messageText);
@@ -980,6 +1023,7 @@ document.addEventListener("DOMContentLoaded", function () {
                       fullText += chunk;
                       
                       if (isFirstChunk && chunk.trim() !== "") {
+                          clearInterval(statusTimer); // ◀ 3. データが届き始めたらタイマーを停止
                           assistantMsgDiv.innerHTML = "";
                           isFirstChunk = false;
                       }
@@ -1024,6 +1068,7 @@ document.addEventListener("DOMContentLoaded", function () {
               }
 
           } catch (error) {
+              clearInterval(statusTimer); // ◀ 4. エラー時もタイマーを停止
               console.error("Fetch error:", error);
               assistantMsgDiv.innerHTML = "<span style='color:red;'>[通信エラーが発生しました]</span>";
               sendBtn.disabled = false;
